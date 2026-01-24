@@ -1,0 +1,3 @@
+/home/based/tcp-server/build/debug/CMakeFiles/app.dir
+/home/based/tcp-server/build/debug/CMakeFiles/edit_cache.dir
+/home/based/tcp-server/build/debug/CMakeFiles/rebuild_cache.dir

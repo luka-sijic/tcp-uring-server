@@ -2,7 +2,7 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
-#include <fnctl.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -12,7 +12,11 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
+
+#include "sbbf.h"
 
 static constexpr unsigned QUEUE_DEPTH = 1024;
 static constexpr size_t BUF_SIZE = 4096;
@@ -26,7 +30,7 @@ static inline uint64_t pack_ud(Op op, int fd, uint32_t aux = 0) {
   return (uint64_t(op) << 56) | (uint64_t(uint32_t(fd) & 0x00FFFFFF) << 32) |
          uint64_t(aux);
 }
-static inline Op unpack_op(uint64_t ud) { return Op((ud > 56) & 0xFF); }
+static inline Op unpack_op(uint64_t ud) { return Op((ud >> 56) & 0xFF); }
 static inline int unpack_fd(uint64_t ud) {
   return int((ud >> 32) & 0x00FFFFFF);
 }
@@ -36,10 +40,57 @@ static inline uint32_t unpack_aux(uint64_t ud) {
 
 struct Conn {
   int fd = -1;
+
+  // input accumulation
+  std::string in;
+
+  // output buffer (for partial sends)
+  std::string out;
+  size_t out_sent = 0;
   char buf[BUF_SIZE];
-  size_t have = 0; // bytes received
-  size_t sent = 0; // bytes sent so far
+  // size_t have = 0; // bytes received
+  // size_t sent = 0; // bytes sent so far
 };
+
+static auto sbbf = SBBF(10'000'000, .01);
+
+static inline std::string_view trim(std::string_view s) {
+  while (!s.empty() &&
+         (s.front() == ' ' || s.front() == '\t' || s.front() == '\r'))
+    s.remove_prefix(1);
+  while (!s.empty() &&
+         (s.back() == ' ' || s.back() == '\t' || s.back() == '\r'))
+    s.remove_suffix(1);
+  return s;
+}
+
+static void handle_line(Conn &c, std::string_view line) {
+  line = trim(line);
+  if (line.empty())
+    return;
+
+  // split: cmd + optional value
+  auto sp = line.find(' ');
+  std::string_view cmd =
+      (sp == std::string_view::npos) ? line : line.substr(0, sp);
+  std::string_view val = (sp == std::string_view::npos)
+                             ? std::string_view{}
+                             : trim(line.substr(sp + 1));
+
+  int ans = 0;
+  if (cmd == "insert") {
+    if (!val.empty())
+      ans = sbbf.insert(val);
+  } else if (cmd == "contains") {
+    if (!val.empty())
+      ans = sbbf.possiblyContains(std::string(val)) ? 1 : 0;
+  } else {
+    ans = 0;
+  }
+
+  c.out.append(std::to_string(ans));
+  c.out.push_back('\n');
+}
 
 static int make_listen_socket(uint16_t port) {
   int fd = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -73,7 +124,7 @@ static int make_listen_socket(uint16_t port) {
   }
   return fd;
 }
-
+/*
 static void submit_accept(io_uring &ring, int listen_fd) {
   io_uring_sqe *sqe = io_uring_get_sqe(&ring);
   if (!sqe)
@@ -88,7 +139,7 @@ static void submit_accept(io_uring &ring, int listen_fd) {
       pack_ud(Op::ACCEPT, listen_fd,
               reinterpret_cast<uintptr_t>(client_addr) & 0xFFFFFFFFu);
 }
-
+*/
 static void submit_accept_simple(io_uring &ring, int listen_fd) {
   io_uring_sqe *sqe = io_uring_get_sqe(&ring);
   if (!sqe)
@@ -101,8 +152,6 @@ static void submit_recv(io_uring &ring, Conn &c) {
   io_uring_sqe *sqe = io_uring_get_sqe(&ring);
   if (!sqe)
     return;
-  c.have = 0;
-  c.sent = 0;
   io_uring_prep_recv(sqe, c.fd, c.buf, BUF_SIZE, 0);
   sqe->user_data = pack_ud(Op::RECV, c.fd);
 }
@@ -111,8 +160,10 @@ static void submit_send(io_uring &ring, Conn &c) {
   io_uring_sqe *sqe = io_uring_get_sqe(&ring);
   if (!sqe)
     return;
-  const size_t remaining = c.have - c.sent;
-  io_uring_prep_send(sqe, c.fd, c.buf + c.sent, remaining, 0);
+  const char *p = c.out.data() + c.out_sent;
+  const size_t n = c.out.size() - c.out_sent;
+
+  io_uring_prep_send(sqe, c.fd, p, n, 0);
   sqe->user_data = pack_ud(Op::SEND, c.fd);
 }
 
@@ -135,6 +186,7 @@ static void print_payload(const char *p, size_t n) {
 }
 
 int main(int argc, char **argv) {
+  auto sbf = SBBF(1'000'000, .01);
   signal(SIGINT, on_sigint);
 
   uint16_t port = 9000;
@@ -146,11 +198,11 @@ int main(int argc, char **argv) {
     return 1;
 
   io_uring ring;
-  if (io_uring_queue_init(QUEUE_DEPTH), &ring, 0) < 0) {
-      perror("io_uring_queue_init");
-      ::close(listen_fd);
-      return 1;
-    }
+  if (io_uring_queue_init(QUEUE_DEPTH, &ring, 0) < 0) {
+    perror("io_uring_queue_init");
+    ::close(listen_fd);
+    return 1;
+  }
 
   std::unordered_map<int, Conn> conns;
 
@@ -181,6 +233,9 @@ int main(int argc, char **argv) {
       submit_accept_simple(ring, listen_fd);
 
       if (res < 0) {
+        std::cerr << "[accept] error: " << strerror(-res) << " (" << res
+                  << ")\n";
+        io_uring_submit(&ring);
         // transient errors can happen; keep going
         // // -EAGAIN if nonblocking and no pending connections
         continue;
@@ -209,12 +264,25 @@ int main(int argc, char **argv) {
       }
 
       Conn &c = it->second;
-      c.have = static_cast<size_t>(res);
-      c.sent = 0;
+      c.in.append(c.buf, c.buf + res);
 
-      print_payload(c.buf, c.have);
+      while (true) {
+        size_t nl = c.in.find('\n');
+        if (nl == std::string::npos)
+          break;
 
-      submit_send(ring, c);
+        std::string line = c.in.substr(0, nl);
+        c.in.erase(0, nl + 1);
+
+        handle_line(c, line);
+      }
+      if (!c.out.empty() && c.out_sent == 0) {
+        submit_send(ring, c);
+      } else {
+        // otherwise keep receiving
+        submit_recv(ring, c);
+      }
+
       io_uring_submit(&ring);
       continue;
     }
@@ -231,14 +299,17 @@ int main(int argc, char **argv) {
       }
 
       Conn &c = it->second;
-      c.sent += static_cast<size_t>(res);
+      c.out_sent += (size_t)res;
 
-      if (c.sent < c.have) {
+      if (c.out_sent < c.out.size()) {
+        // partial send
         submit_send(ring, c);
       } else {
+        // finished sending; clear output and resume recv
+        c.out.clear();
+        c.out_sent = 0;
         submit_recv(ring, c);
       }
-
       io_uring_submit(&ring);
       continue;
     }
