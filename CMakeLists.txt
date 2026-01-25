@@ -11,7 +11,6 @@ add_compile_options(
 
 option(ENABLE_TRACE "Enable tracing" OFF)
 
-
 add_executable(app
   src/main.cpp src/core/protocol.cpp src/core/trace.cpp src/net/server.cpp
 )
