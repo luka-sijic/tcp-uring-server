@@ -13,7 +13,7 @@ option(ENABLE_TRACE "Enable tracing" OFF)
 
 
 add_executable(app
-  main.cpp protocol.cpp trace.cpp
+  main.cpp protocol.cpp trace.cpp server.cpp
 )
 
 find_package(PkgConfig REQUIRED)

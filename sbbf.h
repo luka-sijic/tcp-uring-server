@@ -19,9 +19,31 @@
 #endif
 
 /*
-Filter hashes "lmao" and "god" into the same block
+How it works?
+1. We pick a block using a hash function
+2. We pick bits inside the block
+
+Split-Block
+
+[..........................ONE 256-BIT BLOCK]...........................]
+|
+| Lane 0 | Lane 1 | Lane 2 | Lane 3 | Lane 4 | Lane 5 | Lane 6 | Lane 7 |
+| [32bit] | [32bit] | [32bit] | [32bit] | [32bit] | [32bit] | [32bit] | [32bit]
+|
+
+[ BLOCK X ]
+ Lane 0: [00000001000000000000000000000000] <- Hash0 picks bit 7
+ Lane 1: [00000000000000000010000000000000]  <-- Hash1 picks bit 18
+ Lane 2: [00000000000001000000000000000000]  <-- Hash2 picks bit 13
+ Lane 3: [10000000000000000000000000000000]  <-- Hash3 picks bit 0
+ Lane 4: [00000000000000000000000000000100]  <-- Hash4 picks bit 29
+ Lane 5: [00000000001000000000000000000000]  <-- Hash5 picks bit 10
+ Lane 6: [00000000000000000000010000000000]  <-- Hash6 picks bit 21
+ Lane 7: [00000100000000000000000000000000]  <-- Hash7 picks bit 5
+
+Filter hashes "test" and "test2" into the same block
 filter - 1 0 1 0 1 0 1 0 1
-lmao -   1 0 0 0 0 0 1 0 1
+test -   1 0 0 0 0 0 1 0 1
 AND      1 0 0 0 0 0 1 0 1
 
 OR
