@@ -13,7 +13,7 @@ option(ENABLE_TRACE "Enable tracing" OFF)
 
 
 add_executable(app
-  main.cpp protocol.cpp trace.cpp server.cpp
+  src/main.cpp src/core/protocol.cpp src/core/trace.cpp src/net/server.cpp
 )
 
 find_package(PkgConfig REQUIRED)
@@ -23,6 +23,7 @@ if (ENABLE_TRACE)
   target_compile_definitions(app PRIVATE ENABLE_TRACE=1)
 endif()
 
+target_include_directories(app PRIVATE include)
 target_link_libraries(app PRIVATE PkgConfig::LIBURING)
 
 

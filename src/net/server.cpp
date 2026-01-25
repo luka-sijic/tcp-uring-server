@@ -15,12 +15,12 @@
 #include <string_view>
 #include <unordered_map>
 
-#include "connection.h"
-#include "helpers.h"
-#include "protocol.h"
-#include "sbbf.h"
-#include "server.h"
-#include "trace.h"
+#include "net/connection.h"
+#include "core/helpers.h"
+#include "core/protocol.h"
+#include "core/sbbf.h"
+#include "net/server.h"
+#include "core/trace.h"
 
 static constexpr unsigned kQueueDepth = 1024;
 static constexpr size_t kAcceptPipeline = 4096;

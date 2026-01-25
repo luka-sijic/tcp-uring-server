@@ -1,5 +1,5 @@
-#include "protocol.h"
-#include "sbbf.h"
+#include "core/protocol.h"
+#include "core/sbbf.h"
 
 #include <cctype>
 #include <string>
