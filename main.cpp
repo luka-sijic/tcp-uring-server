@@ -14,9 +14,11 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 
+#include "connection.h"
+#include "protocol.h"
 #include "sbbf.h"
+#include "trace.h"
 
 static constexpr unsigned QUEUE_DEPTH = 1024;
 static constexpr size_t BUF_SIZE = 4096;
@@ -38,62 +40,11 @@ static inline uint32_t unpack_aux(uint64_t ud) {
   return uint32_t(ud & 0xFFFFFFFFu);
 }
 
-struct Conn {
-  int fd = -1;
-
-  // input accumulation
-  std::string in;
-
-  // output buffer (for partial sends)
-  std::string out;
-  size_t out_sent = 0;
-  char buf[BUF_SIZE];
-  // size_t have = 0; // bytes received
-  // size_t sent = 0; // bytes sent so far
-};
-
 static auto sbbf = SBBF(10'000'000, .01);
-
-static inline std::string_view trim(std::string_view s) {
-  while (!s.empty() &&
-         (s.front() == ' ' || s.front() == '\t' || s.front() == '\r'))
-    s.remove_prefix(1);
-  while (!s.empty() &&
-         (s.back() == ' ' || s.back() == '\t' || s.back() == '\r'))
-    s.remove_suffix(1);
-  return s;
-}
-
-static void handle_line(Conn &c, std::string_view line) {
-  line = trim(line);
-  if (line.empty())
-    return;
-
-  // split: cmd + optional value
-  auto sp = line.find(' ');
-  std::string_view cmd =
-      (sp == std::string_view::npos) ? line : line.substr(0, sp);
-  std::string_view val = (sp == std::string_view::npos)
-                             ? std::string_view{}
-                             : trim(line.substr(sp + 1));
-
-  int ans = 0;
-  if (cmd == "insert") {
-    if (!val.empty())
-      ans = sbbf.insert(val);
-  } else if (cmd == "contains") {
-    if (!val.empty())
-      ans = sbbf.possiblyContains(std::string(val)) ? 1 : 0;
-  } else {
-    ans = 0;
-  }
-
-  c.out.append(std::to_string(ans));
-  c.out.push_back('\n');
-}
 
 static int make_listen_socket(uint16_t port) {
   int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  TRACE("hello");
   if (fd < 0) {
     perror("socket");
     return -1;
@@ -267,6 +218,7 @@ int main(int argc, char **argv) {
       c.in.append(c.buf, c.buf + res);
 
       while (true) {
+        TRACE("INSERTED %s", "TEST");
         size_t nl = c.in.find('\n');
         if (nl == std::string::npos)
           break;
@@ -274,7 +226,7 @@ int main(int argc, char **argv) {
         std::string line = c.in.substr(0, nl);
         c.in.erase(0, nl + 1);
 
-        handle_line(c, line);
+        protocol::handle_line(sbbf, line, c.out);
       }
       if (!c.out.empty() && c.out_sent == 0) {
         submit_send(ring, c);

@@ -9,12 +9,19 @@ add_compile_options(
   -Wall -Wextra -Wpedantic 
 )
 
+option(ENABLE_TRACE "Enable tracing" OFF)
+
+
 add_executable(app
-  main.cpp
+  main.cpp protocol.cpp trace.cpp
 )
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBURING REQUIRED IMPORTED_TARGET liburing)
+
+if (ENABLE_TRACE)
+  target_compile_definitions(app PRIVATE ENABLE_TRACE=1)
+endif()
 
 target_link_libraries(app PRIVATE PkgConfig::LIBURING)
 
