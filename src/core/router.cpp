@@ -17,5 +17,11 @@ void Router::post(const std::string &path, Handler func) {
 
 Handler Router::match(std::string method, std::string path) {
   RouteKey rk{method, path};
-  return routes_[rk];
+  auto it = routes_.find(rk);
+  if (it != routes_.end()) {
+    return it->second;
+  }
+  return []() {
+    return Response::http404("Not Found");
+  };
 }

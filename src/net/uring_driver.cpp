@@ -8,7 +8,7 @@
 #include "models/response.h"
 
 static constexpr unsigned kQueueDepth = 1024;
-static constexpr size_t kAcceptPipeline = 64;
+static constexpr size_t kAcceptPipeline = 256;
 
 static volatile sig_atomic_t g_stop = 0;
 static void on_sigint(int) { g_stop = 1; }
@@ -27,20 +27,8 @@ UringDriver::UringDriver(Router *r, int fd) : fd_(fd) {
 
   std::unordered_map<int, Conn> conns;
 
-  for (std::size_t i = 0; i < kAcceptPipeline; ++i)
-    submit_accept(fd_);
+  refill_accepts();
   io_uring_submit(&ring_);
-}
-
-bool UringDriver::submit_multi(int listen_fd) {
-  if (io_uring_sqe *sqe = io_uring_get_sqe(&ring_)) {
-    io_uring_prep_multishot_accept(sqe, listen_fd, nullptr, nullptr, 0);
-    //io_uring_prep_accept(sqe, listen_fd, nullptr, nullptr, 0);
-    //sqe->flags |= IOSQE_MULTISHOT;
-    sqe->user_data = pack_ud(Op::ACCEPT, listen_fd);
-    return true;
-  }
-  return false;
 }
 
 bool UringDriver::submit_accept(int listen_fd) {
@@ -54,6 +42,17 @@ bool UringDriver::submit_accept(int listen_fd) {
   return false;
 }
 
+void UringDriver::refill_accepts() {
+  while (pending_accepts_ < kAcceptPipeline) {
+    if (!submit_accept(fd_)) {
+      accept_refill_needed_ = true;
+      return;
+    }
+    ++pending_accepts_;
+  }
+  accept_refill_needed_ = false;
+}
+
 bool UringDriver::submit_recv(Conn &c) {
   if (io_uring_sqe *sqe = io_uring_get_sqe(&ring_)) {
     io_uring_prep_recv(sqe, c.fd, c.buf, Conn::kBufSize, 0);
@@ -65,7 +64,7 @@ bool UringDriver::submit_recv(Conn &c) {
 
 bool UringDriver::submit_send(Conn &c) {
   if (io_uring_sqe *sqe = io_uring_get_sqe(&ring_)) {
-    const char* p = c.out.data() + c.out_sent;
+    const char *p = c.out.data() + c.out_sent;
     size_t n = c.out.size() - c.out_sent;
 
     io_uring_prep_send(sqe, c.fd, p, n, 0);
@@ -85,15 +84,14 @@ bool UringDriver::submit_close(int fd) {
   return false;
 }
 
-void UringDriver::accept(io_uring_cqe*cqe, int res) {
+void UringDriver::accept(int res) {
+  if (pending_accepts_ > 0) {
+    --pending_accepts_;
+  }
+
   if (res < 0) {
     std::cerr << "[accept] error: " << strerror(-res) << " (" << res << ")\n";
-
-    // For multishot accept, do NOT immediately resubmit on every error.
-    // Only resubmit if the multishot stream ended (no MORE). EBADF during shutdown is normal.
-    if (!(cqe->flags & IORING_CQE_F_MORE) && res != -EBADF) {
-      submit_multi(fd_);                 // fd_ must be your LISTEN fd
-    }
+    refill_accepts();
     io_uring_submit(&ring_);
     return;
   }
@@ -101,20 +99,17 @@ void UringDriver::accept(io_uring_cqe*cqe, int res) {
   int client_fd = res;
 
   auto [it, inserted] = conns_.try_emplace(client_fd);
-  Conn& c = it->second;
+  Conn &c = it->second;
   c.fd = client_fd;
   c.in.clear();
   c.out.clear();
+  c.out_sent = 0;
 
+  // std::cout << "Client Connected\n";
 
-  if (!(cqe->flags & IORING_CQE_F_MORE)) {
-    submit_multi(fd_);                   // repost multishot accept
-  }
-
-  std::cout << "Client Connected\n";
-
-  // Post initial recv
+  // Post initial recv and top up accept pipeline.
   submit_recv(c);
+  refill_accepts();
   io_uring_submit(&ring_);
 }
 
@@ -132,17 +127,31 @@ void UringDriver::recv(int fd, int res) {
 
   Conn &c = it->second;
   c.in.append(c.buf, c.buf + res);
-  //std::cout << c.in << std::endl;
+  // std::cout << c.in << std::endl;
 
+  size_t request_end = c.in.find("\r\n\r\n");
+  if (request_end == std::string::npos) {
+    submit_recv(c);
+    io_uring_submit(&ring_);
+    return;
+  }
+
+  std::string_view request_view(c.in.data(), request_end + 4);
   HttpRequest req{};
-  Parser::parse(c.in, req);
-  //std::cout << "Method: " << req.method << " " << req.path << std::endl;
+  if (!Parser::parse(request_view, req)) {
+    submit_recv(c);
+    io_uring_submit(&ring_);
+    return;
+  }
+  // std::cout << "Method: " << req.method << " " << req.path << std::endl;
 
   std::string m{req.method};
   std::string p{req.path};
   auto result = router_.match(m, p);
   c.out = result();
   submit_send(c);
+
+  c.in.erase(0, request_end + 4);
 
   io_uring_submit(&ring_);
 }
@@ -163,11 +172,13 @@ void UringDriver::send(int fd, int res) {
   c.out_sent += (size_t)res;
   if (c.out_sent < c.out.size()) {
     submit_send(c);
-  } else {
-    c.out.clear();
-    c.out_sent = 0;
-    submit_recv(c);
+    io_uring_submit(&ring_);
+    return;
   }
+
+  c.out.clear();
+  c.out_sent = 0;
+  submit_recv(c);
   io_uring_submit(&ring_);
   return;
 }
@@ -192,7 +203,7 @@ void UringDriver::run() {
 
     switch (op) {
     case Op::ACCEPT:
-      accept(cqe, res);
+      accept(res);
       break;
     case Op::RECV:
       recv(fd, res);
@@ -202,8 +213,16 @@ void UringDriver::run() {
       send(fd, res);
       break;
     case Op::CLOSE:
-      io_uring_submit(&ring_);
+      if (accept_refill_needed_) {
+        refill_accepts();
+        io_uring_submit(&ring_);
+      }
       break;
+    }
+
+    if (accept_refill_needed_) {
+      refill_accepts();
+      io_uring_submit(&ring_);
     }
   }
 }
