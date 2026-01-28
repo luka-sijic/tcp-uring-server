@@ -102,9 +102,7 @@ bool UringDriver::process_requests(Conn &c) {
     }
     // std::cout << "Method: " << req.method << " " << req.path << std::endl;
 
-    std::string m{req.method};
-    std::string p{req.path};
-    auto result = router_.match(m, p);
+    auto result = router_.match(req.method, req.path);
     c.out = result();
     submit_send(c);
 

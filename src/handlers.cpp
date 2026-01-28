@@ -3,6 +3,7 @@
 
 namespace Handlers {
 std::string handleGet() { 
-    return Response::http200("test5");
+    static const std::string kResponse = Response::http200("test5");
+    return kResponse;
 }
 } // namespace Handlers

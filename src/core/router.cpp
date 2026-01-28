@@ -6,18 +6,28 @@
 change to use radix tree in the future
 */
 void Router::get(const std::string &path, Handler func) {
-  RouteKey rk{"GET", path};
-  routes_[rk] = func;
+  std::string key;
+  key.reserve(4 + path.size());
+  key.append("GET ");
+  key.append(path);
+  routes_[key] = func;
 }
 
 void Router::post(const std::string &path, Handler func) {
-  RouteKey rk{"POST", path};
-  routes_[rk] = func;
+  std::string key;
+  key.reserve(5 + path.size());
+  key.append("POST ");
+  key.append(path);
+  routes_[key] = func;
 }
 
-Handler Router::match(std::string method, std::string path) {
-  RouteKey rk{method, path};
-  auto it = routes_.find(rk);
+Handler Router::match(std::string_view method, std::string_view path) {
+  std::string key;
+  key.reserve(method.size() + 1 + path.size());
+  key.append(method);
+  key.push_back(' ');
+  key.append(path);
+  auto it = routes_.find(key);
   if (it != routes_.end()) {
     return it->second;
   }
