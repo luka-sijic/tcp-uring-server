@@ -28,3 +28,10 @@ Requests/sec:   1556.49
 Transfer/sec:    141.36KB
 
 Updated: Updated Response Building
+  8 threads and 512 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   320.94ms   78.95ms 557.14ms   60.93%
+    Req/Sec   198.82     63.60   420.00     69.98%
+  47606 requests in 30.09s, 4.22MB read
+Requests/sec:   1582.33
+Transfer/sec:    143.71KB
