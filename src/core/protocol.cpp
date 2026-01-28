@@ -33,7 +33,7 @@ void protocol::handle_line(SBBF &store, std::string_view line,
   } else if (cmd == "contains") {
     ans = store.possiblyContains(val);
   } else {
-    ans = 0; // unknown command
+    ans = -1; // unknown command
   }
 
   out.append(std::to_string(ans));

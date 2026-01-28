@@ -10,17 +10,18 @@
 
 #include <cstdint>
 #include <cstring>
+#include <expected>
 #include <iostream>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 
-#include "net/connection.h"
 #include "core/helpers.h"
 #include "core/protocol.h"
 #include "core/sbbf.h"
-#include "net/server.h"
 #include "core/trace.h"
+#include "net/connection.h"
+#include "net/server.h"
 
 static constexpr unsigned kQueueDepth = 1024;
 static constexpr size_t kAcceptPipeline = 4096;
@@ -40,7 +41,7 @@ static int make_listen_socket(uint16_t port) {
 
   int one = 1;
   if (::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) < 0) {
-    perror("setsockopt(RO_REUSEADDR)");
+    perror("setsockopt(SO_REUSEADDR)");
     ::close(fd);
     return -1;
   }
@@ -85,15 +86,18 @@ struct Server::Impl {
   int listen_fd{-1};
   io_uring ring{};
   std::unordered_map<int, Conn> conns;
+  std::unordered_map<std::string, std::string> m1;
   SBBF sbbf{1'000'000, .01};
 
   explicit Impl(uint16_t p) : port(p) {}
 };
 
 static void submit_accept_simple(io_uring &ring, int listen_fd) {
+  // we get a SQE from our buffer ring
   io_uring_sqe *sqe = io_uring_get_sqe(&ring);
   if (!sqe)
     return;
+  // fills out the SQE
   io_uring_prep_accept(sqe, listen_fd, nullptr, nullptr, SOCK_NONBLOCK);
   sqe->user_data = pack_ud(Op::ACCEPT, listen_fd);
 }
@@ -149,7 +153,7 @@ Server::Server(uint16_t port) : impl_(new Impl(port)) {
 
   std::unordered_map<int, Conn> conns;
 
-  for (int i = 0; i < kAcceptPipeline; ++i)
+  for (std::size_t i = 0; i < kAcceptPipeline; ++i)
     submit_accept_simple(impl_->ring, impl_->listen_fd);
   io_uring_submit(&impl_->ring);
 
@@ -165,8 +169,6 @@ Server::~Server() {
   if (impl_->listen_fd >= 0)
     ::close(impl_->listen_fd);
   io_uring_queue_exit(&impl_->ring);
-
-  delete impl_;
 }
 
 void Server::run() {
@@ -225,13 +227,15 @@ void Server::run() {
       c.in.append(c.buf, c.buf + res);
 
       while (true) {
-        TRACE("INSERTED %s", "TEST");
+        // TRACE("INSERTED %s", "TEST");
         size_t nl = c.in.find('\n');
         if (nl == std::string::npos)
           break;
 
         std::string line = c.in.substr(0, nl);
         c.in.erase(0, nl + 1);
+
+        std::cout << line << std::endl;
 
         protocol::handle_line(sbbf, line, c.out);
       }

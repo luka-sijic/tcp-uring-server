@@ -1,16 +1,18 @@
 #pragma once
 #include <cstdint>
+#include <memory>
 
 class Server {
 public:
-    explicit Server(uint16_t port);
-    ~Server();
+  explicit Server(uint16_t port);
+  ~Server();
 
-    Server(const Server&) = delete;
-    Server& operator=(const Server&) = delete;
+  Server(const Server &) = delete;
+  Server &operator=(const Server &) = delete;
 
-    void run();
+  void run();
+
 private:
-    struct Impl;
-    Impl* impl_;
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
 };
