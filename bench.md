@@ -7,3 +7,24 @@ Mac -> Linux 01/28
   Socket errors: connect 267, read 0, write 0, timeout 0
 Requests/sec:   1464.32
 Transfer/sec:    132.99KB
+
+Caddy on Linux
+  8 threads and 512 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   183.60ms   78.25ms 539.48ms   75.71%
+    Req/Sec   352.42    149.96   626.00     53.98%
+  83767 requests in 30.05s, 19.97MB read
+Requests/sec:   2788.01
+Transfer/sec:    680.67KB
+
+Initial
+Custom on Linux
+  8 threads and 512 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   326.37ms   78.40ms   1.08s    64.30%
+    Req/Sec   195.51     60.04   410.00     70.93%
+  46845 requests in 30.10s, 4.15MB read
+Requests/sec:   1556.49
+Transfer/sec:    141.36KB
+
+Updated: Updated Response Building
