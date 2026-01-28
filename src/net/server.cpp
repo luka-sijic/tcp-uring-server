@@ -17,19 +17,11 @@
 #include <unordered_map>
 
 #include "core/helpers.h"
-#include "core/protocol.h"
-#include "core/sbbf.h"
 #include "core/trace.h"
+#include "models/response.h"
 #include "net/connection.h"
-#include "net/server.h"
-
-static constexpr unsigned kQueueDepth = 1024;
-static constexpr size_t kAcceptPipeline = 4096;
-
-static volatile sig_atomic_t g_stop = 0;
-static void on_sigint(int) { g_stop = 1; }
-
-static auto sbbf = SBBF(10'000'000, .01);
+#include "net/server.hpp"
+#include "net/uring_driver.hpp"
 
 static int make_listen_socket(uint16_t port) {
   int fd = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -64,113 +56,15 @@ static int make_listen_socket(uint16_t port) {
   }
   return fd;
 }
-/*
-static void submit_accept(io_uring &ring, int listen_fd) {
-  io_uring_sqe *sqe = io_uring_get_sqe(&ring);
-  if (!sqe)
-    return;
 
-  auto *client_addr = new sockaddr_in{};
-  auto *client_len = new socklen_t(sizeof(sockaddr_in));
-
-  io_uring_prep_accept_direct(sqe, listen_fd, (sockaddr *)client_addr,
-                              client_len, SOCK_NONBLOCK);
-  sqe->user_data =
-      pack_ud(Op::ACCEPT, listen_fd,
-              reinterpret_cast<uintptr_t>(client_addr) & 0xFFFFFFFFu);
-}
-*/
-
-struct Server::Impl {
-  uint16_t port{};
-  int listen_fd{-1};
-  io_uring ring{};
-  std::unordered_map<int, Conn> conns;
-  std::unordered_map<std::string, std::string> m1;
-  SBBF sbbf{1'000'000, .01};
-
-  explicit Impl(uint16_t p) : port(p) {}
-};
-
-static void submit_accept_simple(io_uring &ring, int listen_fd) {
-  // we get a SQE from our buffer ring
-  io_uring_sqe *sqe = io_uring_get_sqe(&ring);
-  if (!sqe)
-    return;
-  // fills out the SQE
-  io_uring_prep_accept(sqe, listen_fd, nullptr, nullptr, SOCK_NONBLOCK);
-  sqe->user_data = pack_ud(Op::ACCEPT, listen_fd);
-}
-
-static void submit_recv(io_uring &ring, Conn &c) {
-  io_uring_sqe *sqe = io_uring_get_sqe(&ring);
-  if (!sqe)
-    return;
-  io_uring_prep_recv(sqe, c.fd, c.buf, Conn::kBufSize, 0);
-  sqe->user_data = pack_ud(Op::RECV, c.fd);
-}
-
-static void submit_send(io_uring &ring, Conn &c) {
-  io_uring_sqe *sqe = io_uring_get_sqe(&ring);
-  if (!sqe)
-    return;
-  const char *p = c.out.data() + c.out_sent;
-  const size_t n = c.out.size() - c.out_sent;
-
-  io_uring_prep_send(sqe, c.fd, p, n, 0);
-  sqe->user_data = pack_ud(Op::SEND, c.fd);
-}
-
-static void submit_close(io_uring &ring, int fd) {
-  io_uring_sqe *sqe = io_uring_get_sqe(&ring);
-  if (!sqe)
-    return;
-  io_uring_prep_close(sqe, fd);
-  sqe->user_data = pack_ud(Op::CLOSE, fd);
-}
-
-static void print_payload(const char *p, size_t n) {
-  std::string out;
-  out.reserve(n);
-  for (size_t i = 0; i < n; i++) {
-    unsigned char ch = static_cast<unsigned char>(p[i]);
-    out.push_back((ch >= 32 && ch <= 126) ? char(ch) : '.');
-  }
-  std::cout << "[recv] " << out << "\n";
-}
-
-Server::Server(uint16_t port) : impl_(new Impl(port)) {
-  signal(SIGINT, on_sigint);
-
-  impl_->listen_fd = make_listen_socket(port);
-  if (impl_->listen_fd < 0)
-    throw ::std::runtime_error("failed to create listen socket");
-
-  if (io_uring_queue_init(kQueueDepth, &impl_->ring, 0) < 0) {
-    ::close(impl_->listen_fd);
-    throw std::runtime_error("io_uring_queue_init failed");
-  }
-
-  std::unordered_map<int, Conn> conns;
-
-  for (std::size_t i = 0; i < kAcceptPipeline; ++i)
-    submit_accept_simple(impl_->ring, impl_->listen_fd);
-  io_uring_submit(&impl_->ring);
-
+Server::Server(Router *r, uint16_t port) : router_(r), port_(port) {
+  int fd = make_listen_socket(port);
+  UringDriver driver(r, fd);
+  driver.run();
   std::cout << "Listening on 0.0.0.0:" << port << " (Ctrl+C to stop)\n";
 }
 
-Server::~Server() {
-  if (!impl_)
-    return;
-
-  for (auto &[fd, _] : impl_->conns)
-    ::close(fd);
-  if (impl_->listen_fd >= 0)
-    ::close(impl_->listen_fd);
-  io_uring_queue_exit(&impl_->ring);
-}
-
+/*
 void Server::run() {
   while (!g_stop) {
     io_uring_cqe *cqe = nullptr;
@@ -195,7 +89,7 @@ void Server::run() {
       if (res < 0) {
         std::cerr << "[accept] error: " << strerror(-res) << " (" << res
                   << ")\n";
-        io_uring_submit(&impl_->ring);
+        io_uring_submit(&impl_->driver->ring);
         // transient errors can happen; keep going
         // // -EAGAIN if nonblocking and no pending connections
         continue;
@@ -225,7 +119,7 @@ void Server::run() {
 
       Conn &c = it->second;
       c.in.append(c.buf, c.buf + res);
-
+      std::string full;
       while (true) {
         // TRACE("INSERTED %s", "TEST");
         size_t nl = c.in.find('\n');
@@ -235,11 +129,15 @@ void Server::run() {
         std::string line = c.in.substr(0, nl);
         c.in.erase(0, nl + 1);
 
-        std::cout << line << std::endl;
+        //std::cout << line << std::endl;
+        HttpRequest *req = new HttpRequest{};
+        full += line;
 
-        protocol::handle_line(sbbf, line, c.out);
+        auto res = protocol::handle_line(line, *req);
+        //std::cout << "METHOD: " << req->method << " target: " << req->target;
       }
       if (!c.out.empty() && c.out_sent == 0) {
+        std::cout << full << std::endl;
         submit_send(impl_->ring, c);
       } else {
         // otherwise keep receiving
@@ -283,3 +181,4 @@ void Server::run() {
     }
   }
 }
+*/
