@@ -84,6 +84,35 @@ bool UringDriver::submit_close(int fd) {
   return false;
 }
 
+bool UringDriver::process_requests(Conn &c) {
+  if (!c.out.empty()) {
+    return false;
+  }
+
+  while (true) {
+    size_t request_end = c.in.find("\r\n\r\n");
+    if (request_end == std::string::npos) {
+      return false;
+    }
+
+    std::string_view request_view(c.in.data(), request_end + 4);
+    HttpRequest req{};
+    if (!Parser::parse(request_view, req)) {
+      return false;
+    }
+    // std::cout << "Method: " << req.method << " " << req.path << std::endl;
+
+    std::string m{req.method};
+    std::string p{req.path};
+    auto result = router_.match(m, p);
+    c.out = result();
+    submit_send(c);
+
+    c.in.erase(0, request_end + 4);
+    return true;
+  }
+}
+
 void UringDriver::accept(int res) {
   if (pending_accepts_ > 0) {
     --pending_accepts_;
@@ -129,30 +158,12 @@ void UringDriver::recv(int fd, int res) {
   c.in.append(c.buf, c.buf + res);
   // std::cout << c.in << std::endl;
 
-  size_t request_end = c.in.find("\r\n\r\n");
-  if (request_end == std::string::npos) {
-    submit_recv(c);
+  if (process_requests(c)) {
     io_uring_submit(&ring_);
     return;
   }
 
-  std::string_view request_view(c.in.data(), request_end + 4);
-  HttpRequest req{};
-  if (!Parser::parse(request_view, req)) {
-    submit_recv(c);
-    io_uring_submit(&ring_);
-    return;
-  }
-  // std::cout << "Method: " << req.method << " " << req.path << std::endl;
-
-  std::string m{req.method};
-  std::string p{req.path};
-  auto result = router_.match(m, p);
-  c.out = result();
-  submit_send(c);
-
-  c.in.erase(0, request_end + 4);
-
+  submit_recv(c);
   io_uring_submit(&ring_);
 }
 
@@ -178,6 +189,12 @@ void UringDriver::send(int fd, int res) {
 
   c.out.clear();
   c.out_sent = 0;
+
+  if (process_requests(c)) {
+    io_uring_submit(&ring_);
+    return;
+  }
+
   submit_recv(c);
   io_uring_submit(&ring_);
   return;

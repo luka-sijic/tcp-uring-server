@@ -24,6 +24,7 @@ public:
     void run();
 private:
     void refill_accepts();
+    bool process_requests(Conn &c);
 
     io_uring ring_{};
     int fd_{-1};
