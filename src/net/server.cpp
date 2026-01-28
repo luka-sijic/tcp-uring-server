@@ -23,7 +23,7 @@
 #include "net/server.hpp"
 #include "net/uring_driver.hpp"
 
-static int make_listen_socket(uint16_t port) {
+int Server::make_listen_socket(uint16_t port) {
   int fd = ::socket(AF_INET, SOCK_STREAM, 0);
   TRACE("hello");
   if (fd < 0) {
@@ -34,6 +34,12 @@ static int make_listen_socket(uint16_t port) {
   int one = 1;
   if (::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) < 0) {
     perror("setsockopt(SO_REUSEADDR)");
+    ::close(fd);
+    return -1;
+  }
+
+  if (::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one)) < 0) {
+    perror("setsockopt(SO_REUSEPORT)");
     ::close(fd);
     return -1;
   }

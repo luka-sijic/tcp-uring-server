@@ -9,6 +9,7 @@
 class Server {
 public:
   explicit Server(Router *r, uint16_t port);
+  static int make_listen_socket(uint16_t port);
   //~Server();
 
   Server(Server&&) = delete;
