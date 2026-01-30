@@ -1,32 +1,20 @@
 #include "net/uring_driver.hpp"
 
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <signal.h>
 
 #include "core/parser.hpp"
 #include "models/response.h"
 
-/*
-struct Vec2 { x, y};
-
-struct {
-  uint32_t client_id; // client id;
-  uint32_t match_id; // match id
-  Vec2 pos;
-  int fd;
+static void dump_hex(const char *p, size_t n) {
+  for (size_t i = 0; i < n; ++i) {
+    unsigned v = static_cast<unsigned>(static_cast<unsigned char>(p[i]));
+    std::cout << std::hex << std::setw(2) << std::setfill('0') << v << ' ';
+  }
+  std::cout << std::dec << '\n';
 }
-
-struct Match {
-  uint32_t match_id;
-  std::vector<uint32_t> players;
-}
-
-std::unordered_map<int, Conn> conns_by_fd;
-std::unordered_map<std::uint32_t, Client> clients_by_id;
-std::unordered_map<std::uint32_t, Match> matches_by_id;
-
-*/
 
 static constexpr unsigned kQueueDepth = 1024;
 static constexpr size_t kAcceptPipeline = 256;
@@ -46,50 +34,55 @@ UringDriver::UringDriver(Router *r, int fd) : fd_(fd) {
     throw ::std::runtime_error("io_uring_queue_init failed");
   }
 
-  std::unordered_map<int, Conn> conns;
+  for (int i = 0; i < kUdpSlots; ++i) {
+    auto &s = udp_[i];
 
-  refill_accepts();
+    s.iov.iov_base = s.buf;
+    s.iov.iov_len = UdpState::kBufSize;
+
+    std::memset(&s.msg, 0, sizeof(s.msg));
+    s.msg.msg_name = &s.peer;
+    s.msg.msg_namelen = s.peer_len;
+    s.msg.msg_iov = &s.iov;
+    s.msg.msg_iovlen = 1;
+  }
+
+  submit_recv(0);
+  submit_recv(1);
   io_uring_submit(&ring_);
 }
 
-bool UringDriver::submit_accept(int listen_fd) {
-  // we get a SQE from our buffer ring
+bool UringDriver::submit_recv(uint32_t slot) {
+  auto &s = udp_[slot];
+
   if (io_uring_sqe *sqe = io_uring_get_sqe(&ring_)) {
-    // fills out the SQE
-    io_uring_prep_accept(sqe, listen_fd, nullptr, nullptr, SOCK_NONBLOCK);
-    sqe->user_data = pack_ud(Op::ACCEPT, listen_fd);
+    s.peer_len = sizeof(s.peer);
+    s.msg.msg_namelen = s.peer_len;
+    s.iov.iov_base = s.buf;
+    s.iov.iov_len = UdpState::kBufSize;
+
+    io_uring_prep_recvmsg(sqe, fd_, &s.msg, 0);
+    sqe->user_data = pack_ud_slot(Op::RECV, slot);
     return true;
   }
   return false;
 }
 
-void UringDriver::refill_accepts() {
-  while (pending_accepts_ < kAcceptPipeline) {
-    if (!submit_accept(fd_)) {
-      accept_refill_needed_ = true;
-      return;
-    }
-    ++pending_accepts_;
-  }
-  accept_refill_needed_ = false;
-}
+bool UringDriver::submit_send(uint32_t slot) {
+  auto &s = udp_[slot];
 
-bool UringDriver::submit_recv(Conn &c) {
   if (io_uring_sqe *sqe = io_uring_get_sqe(&ring_)) {
-    io_uring_prep_recv(sqe, c.fd, c.buf, Conn::kBufSize, 0);
-    sqe->user_data = pack_ud(Op::RECV, c.fd);
-    return true;
-  }
-  return false;
-}
+    s.siov.iov_base = s.out.data();
+    s.siov.iov_len = s.out.size();
 
-bool UringDriver::submit_send(Conn &c) {
-  if (io_uring_sqe *sqe = io_uring_get_sqe(&ring_)) {
-    const char *p = c.out.data() + c.out_sent;
-    size_t n = c.out.size() - c.out_sent;
+    std::memset(&s.smsg, 0, sizeof(s.smsg));
+    s.smsg.msg_name = &s.peer;
+    s.smsg.msg_namelen = s.msg.msg_namelen;
+    s.smsg.msg_iov = &s.siov;
+    s.smsg.msg_iovlen = 1;
 
-    io_uring_prep_send(sqe, c.fd, p, n, 0);
-    sqe->user_data = pack_ud(Op::SEND, c.fd);
+    io_uring_prep_sendmsg(sqe, fd_, &s.smsg, 0);
+    sqe->user_data = pack_ud_slot(Op::SEND, slot);
 
     return true;
   }
@@ -99,127 +92,48 @@ bool UringDriver::submit_send(Conn &c) {
 bool UringDriver::submit_close(int fd) {
   if (io_uring_sqe *sqe = io_uring_get_sqe(&ring_)) {
     io_uring_prep_close(sqe, fd);
-    sqe->user_data = pack_ud(Op::CLOSE, fd);
+    sqe->user_data = pack_ud_slot(Op::CLOSE, fd);
     return true;
   }
   return false;
 }
 
-bool UringDriver::process_requests(Conn &c) {
-  if (!c.out.empty()) {
-    return false;
+void UringDriver::recv(uint32_t slot, int res) {
+  auto &s = udp_[slot];
+  if (res < 0) {
+    std::cerr << "RECV(slot=" << slot << ") err=" << strerror(-res) << " ( "
+              << res << ")\n";
+    submit_recv(slot);
+    io_uring_submit(&ring_);
+    return;
   }
 
-  while (true) {
-    size_t request_end = c.in.find("\r\n\r\n");
-    if (request_end == std::string::npos) {
-      return false;
-    }
+  std::cout << "RECV slot=" << slot << " bytes=" << res << " data='";
+  std::cout.write(s.buf, res);
+  std::cout << "'\n";
+  std::cout.flush();
+  dump_hex(s.buf, res);
 
-    std::string_view request_view(c.in.data(), request_end + 4);
-    HttpRequest req{};
-    if (!Parser::parse(request_view, req)) {
-      return false;
-    }
-    // std::cout << "Method: " << req.method << " " << req.path << std::endl;
-
-    auto result = router_.match(req.method, req.path);
-    c.out = result();
-    submit_send(c);
-
-    c.in.erase(0, request_end + 4);
-    return true;
-  }
+  s.out.assign(s.buf, s.buf + res);
+  submit_send(slot);
+  io_uring_submit(&ring_);
 }
 
-void UringDriver::accept(int res) {
-  if (pending_accepts_ > 0) {
-    --pending_accepts_;
-  }
+void UringDriver::send(uint32_t slot, int res) {
+  auto &s = udp_[slot];
 
   if (res < 0) {
-    std::cerr << "[accept] error: " << strerror(-res) << " (" << res << ")\n";
-    refill_accepts();
-    io_uring_submit(&ring_);
-    return;
+    std::cerr << "SEND error: " << strerror(-res) << " (" << res << ")\n";
   }
 
-  int client_fd = res;
+  s.out.clear();
 
-  auto [it, inserted] = conns_.try_emplace(client_fd);
-  Conn &c = it->second;
-  c.fd = client_fd;
-  c.in.clear();
-  c.out.clear();
-  c.out_sent = 0;
-
-  // std::cout << "Client Connected\n";
-
-  // Post initial recv and top up accept pipeline.
-  submit_recv(c);
-  refill_accepts();
+  submit_send(slot);
   io_uring_submit(&ring_);
-}
-
-void UringDriver::recv(int fd, int res) {
-  auto it = conns_.find(fd);
-  if (it == conns_.end())
-    return;
-
-  if (res <= 0) {
-    submit_close(fd);
-    conns_.erase(it);
-    io_uring_submit(&ring_);
-    return;
-  }
-
-  Conn &c = it->second;
-  c.in.append(c.buf, c.buf + res);
-  // std::cout << c.in << std::endl;
-
-  if (process_requests(c)) {
-    io_uring_submit(&ring_);
-    return;
-  }
-
-  submit_recv(c);
-  io_uring_submit(&ring_);
-}
-
-void UringDriver::send(int fd, int res) {
-  auto it = conns_.find(fd);
-  if (it == conns_.end())
-    return;
-
-  if (res < 0) {
-    submit_close(fd);
-    conns_.erase(it);
-    io_uring_submit(&ring_);
-    return;
-  }
-
-  Conn &c = it->second;
-  c.out_sent += (size_t)res;
-  if (c.out_sent < c.out.size()) {
-    submit_send(c);
-    io_uring_submit(&ring_);
-    return;
-  }
-
-  c.out.clear();
-  c.out_sent = 0;
-
-  if (process_requests(c)) {
-    io_uring_submit(&ring_);
-    return;
-  }
-
-  submit_recv(c);
-  io_uring_submit(&ring_);
-  return;
 }
 
 void UringDriver::run() {
+  std::cout << "RUNNING" << std::endl;
   while (!g_stop) {
     io_uring_cqe *cqe{};
     int rc = io_uring_wait_cqe(&ring_, &cqe);
@@ -231,41 +145,29 @@ void UringDriver::run() {
     }
 
     uint64_t ud = cqe->user_data;
-    Op op = unpack_op(ud);
-    int fd = unpack_fd(ud);
+    Op op = unpack_op_slot(ud);
+    uint32_t slot = unpack_slot(ud);
+    std::cout << slot << std::endl;
     int res = cqe->res;
+    // std::cout << res << std::endl;
 
     io_uring_cqe_seen(&ring_, cqe);
 
     switch (op) {
-    case Op::ACCEPT:
-      accept(res);
-      break;
     case Op::RECV:
-      recv(fd, res);
-      // send(fd, res);
+      recv(slot, res);
       break;
     case Op::SEND:
-      send(fd, res);
+      send(slot, res);
       break;
     case Op::CLOSE:
-      if (accept_refill_needed_) {
-        refill_accepts();
-        io_uring_submit(&ring_);
-      }
-      break;
-    }
-
-    if (accept_refill_needed_) {
-      refill_accepts();
       io_uring_submit(&ring_);
+      break;
     }
   }
 }
 
 UringDriver::~UringDriver() {
-  for (auto &[fd, _] : conns_)
-    ::close(fd);
   if (fd_ >= 0)
     ::close(fd_);
   io_uring_queue_exit(&ring_);

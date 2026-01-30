@@ -36,13 +36,16 @@ int main() {
     router->get("/", Handlers::handleGet);
 
     // 2) Spawn workers
-    unsigned N = std::max(1u, std::thread::hardware_concurrency());
-    std::vector<std::thread> threads;
-    threads.reserve(N);
+    // unsigned N = std::max(1u, std::thread::hardware_concurrency());
+    // std::vector<std::thread> threads;
+    // threads.reserve(N);
 
     Router *r = router.get(); // shared, read-only after setup
+    int fd = Server::make_listen_socket(port);
+    UringDriver d(r, fd);
+    d.run();
 
-    for (unsigned i = 0; i < N; ++i) {
+    /*for (unsigned i = 0; i < N; ++i) {
       threads.emplace_back([=]() {
 #ifdef __linux__
         const int cpu = int(i % N);
@@ -55,10 +58,10 @@ int main() {
         w.run();
         ::close(fd);
       });
-    }
+    }*/
 
-    for (auto &t : threads)
-      t.join();
+    // for (auto &t : threads)
+    //   t.join();
     return 0;
 
   } catch (const std::exception &e) {

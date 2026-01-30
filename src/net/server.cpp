@@ -24,8 +24,8 @@
 #include "net/uring_driver.hpp"
 
 int Server::make_listen_socket(uint16_t port) {
-  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  TRACE("hello");
+  int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+  TRACE("starting udp server");
   if (fd < 0) {
     perror("socket");
     return -1;
@@ -55,11 +55,6 @@ int Server::make_listen_socket(uint16_t port) {
     return -1;
   }
 
-  if (::listen(fd, SOMAXCONN) < 0) {
-    perror("listen");
-    ::close(fd);
-    return -1;
-  }
   return fd;
 }
 

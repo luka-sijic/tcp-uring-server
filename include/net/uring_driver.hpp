@@ -9,27 +9,22 @@
 
 class UringDriver {
 public:
-    UringDriver(Router* r, int fd);
-    ~UringDriver();
+  UringDriver(Router *r, int fd);
+  ~UringDriver();
 
-    bool submit_accept(int listen_fd);
-    bool submit_recv(Conn& c);
-    bool submit_send(Conn& c);
-    bool submit_close(int fd);
+  bool submit_recv(uint32_t slot);
+  bool submit_send(uint32_t slot);
+  bool submit_close(int fd);
 
-    void accept(int res);
-    void recv(int fd, int res);
-    void send(int fd, int res);
+  void recv(uint32_t slot, int res);
+  void send(uint32_t slot, int res);
 
-    void run();
+  void run();
+
 private:
-    void refill_accepts();
-    bool process_requests(Conn &c);
-
-    io_uring ring_{};
-    int fd_{-1};
-    Router router_;
-    std::unordered_map<int, Conn> conns_;
-    std::size_t pending_accepts_{0};
-    bool accept_refill_needed_{false};
+  io_uring ring_{};
+  int fd_{-1};
+  Router router_;
+  static constexpr int kUdpSlots = 2;
+  UdpState udp_[kUdpSlots];
 };
