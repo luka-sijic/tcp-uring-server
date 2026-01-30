@@ -44,3 +44,32 @@ Updated: Optimized build for release
   46915 requests in 30.09s, 4.16MB read
 Requests/sec:   1558.95
 Transfer/sec:    141.58KB
+
+
+# Local
+  8 threads and 512 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     1.10ms    1.48ms  25.61ms   84.53%
+    Req/Sec    67.56k     6.87k   88.15k    76.17%
+  Latency Distribution
+     50%  327.00us
+     75%    1.37ms
+     90%    3.51ms
+     99%    5.91ms
+  16133083 requests in 30.04s, 1.40GB read
+Requests/sec: 537045.30
+Transfer/sec:     47.63MB
+
+  8 threads and 512 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    11.20ms   15.96ms 183.87ms   84.17%
+    Req/Sec    16.37k     1.50k   22.89k    69.33%
+  Latency Distribution
+     50%    2.50ms
+     75%   17.58ms
+     90%   34.84ms
+     99%   66.28ms
+  3909425 requests in 30.04s, 0.91GB read
+Requests/sec: 130119.34
+Transfer/sec:     31.02MB
+

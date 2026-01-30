@@ -7,6 +7,27 @@
 #include "core/parser.hpp"
 #include "models/response.h"
 
+/*
+struct Vec2 { x, y};
+
+struct {
+  uint32_t client_id; // client id;
+  uint32_t match_id; // match id
+  Vec2 pos;
+  int fd;
+}
+
+struct Match {
+  uint32_t match_id;
+  std::vector<uint32_t> players;
+}
+
+std::unordered_map<int, Conn> conns_by_fd;
+std::unordered_map<std::uint32_t, Client> clients_by_id;
+std::unordered_map<std::uint32_t, Match> matches_by_id;
+
+*/
+
 static constexpr unsigned kQueueDepth = 1024;
 static constexpr size_t kAcceptPipeline = 256;
 
@@ -22,7 +43,7 @@ UringDriver::UringDriver(Router *r, int fd) : fd_(fd) {
 
   if (io_uring_queue_init(kQueueDepth, &ring_, 0) < 0) {
     ::close(fd_);
-    throw std::runtime_error("io_uring_queue_init failed");
+    throw ::std::runtime_error("io_uring_queue_init failed");
   }
 
   std::unordered_map<int, Conn> conns;
