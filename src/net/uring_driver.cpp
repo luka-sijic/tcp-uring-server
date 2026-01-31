@@ -41,6 +41,7 @@ UringDriver::UringDriver(Router *r, int fd) : fd_(fd) {
     s.iov.iov_len = UdpState::kBufSize;
 
     std::memset(&s.msg, 0, sizeof(s.msg));
+    s.peer_len = sizeof(s.peer);
     s.msg.msg_name = &s.peer;
     s.msg.msg_namelen = s.peer_len;
     s.msg.msg_iov = &s.iov;
@@ -70,6 +71,7 @@ bool UringDriver::submit_recv(uint32_t slot) {
 
 bool UringDriver::submit_send(uint32_t slot) {
   auto &s = udp_[slot];
+  std::cout << "SENDING" << std::endl;
 
   if (io_uring_sqe *sqe = io_uring_get_sqe(&ring_)) {
     s.siov.iov_base = s.out.data();
@@ -77,7 +79,7 @@ bool UringDriver::submit_send(uint32_t slot) {
 
     std::memset(&s.smsg, 0, sizeof(s.smsg));
     s.smsg.msg_name = &s.peer;
-    s.smsg.msg_namelen = s.msg.msg_namelen;
+    s.smsg.msg_namelen = sizeof(s.peer);
     s.smsg.msg_iov = &s.siov;
     s.smsg.msg_iovlen = 1;
 
@@ -98,6 +100,26 @@ bool UringDriver::submit_close(int fd) {
   return false;
 }
 
+struct Vec2f {
+  float x;
+  float y;
+};
+
+void print_vec2f(const char *buf, int n) {
+  Vec2f v{};
+  std::memcpy(&v, buf, sizeof(v));
+  std::cout << "as float x: " << v.x << " y: " << v.y;
+}
+
+struct Players {
+  std::uint32_t op; // 0 register 1 player update
+  std::uint32_t id;
+  float x;
+  float y;
+};
+
+std::unordered_map<uint32_t, int> players_list;
+
 void UringDriver::recv(uint32_t slot, int res) {
   auto &s = udp_[slot];
   if (res < 0) {
@@ -109,10 +131,19 @@ void UringDriver::recv(uint32_t slot, int res) {
   }
 
   std::cout << "RECV slot=" << slot << " bytes=" << res << " data='";
-  std::cout.write(s.buf, res);
-  std::cout << "'\n";
-  std::cout.flush();
-  dump_hex(s.buf, res);
+  if (res == (int)sizeof(Players)) {
+    Players p{};
+    std::memcpy(&p, s.buf, sizeof(Players));
+    if (p.op == 0)
+      players_list[p.id] = slot;
+    std::cout << p.op << " " << p.id << " " << p.x << " " << p.y << "\n";
+
+  } else {
+    std::cout << "Unexpected size" << "\n";
+  }
+  // std::cout << "'\n";
+  // std::cout.flush();
+  // dump_hex(s.buf, res);
 
   s.out.assign(s.buf, s.buf + res);
   submit_send(slot);
@@ -128,7 +159,7 @@ void UringDriver::send(uint32_t slot, int res) {
 
   s.out.clear();
 
-  submit_send(slot);
+  submit_recv(slot);
   io_uring_submit(&ring_);
 }
 
@@ -147,9 +178,7 @@ void UringDriver::run() {
     uint64_t ud = cqe->user_data;
     Op op = unpack_op_slot(ud);
     uint32_t slot = unpack_slot(ud);
-    std::cout << slot << std::endl;
     int res = cqe->res;
-    // std::cout << res << std::endl;
 
     io_uring_cqe_seen(&ring_, cqe);
 
