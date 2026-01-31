@@ -10,6 +10,12 @@
 #include "net/server.hpp"
 #include "net/uring_driver.hpp"
 
+static const auto fast_io = []() {
+  std::ios::sync_with_stdio(false);
+  std::cin.tie(nullptr);
+  return 0;
+}();
+
 struct Worker {
   int listen_fd{-1};
   UringDriver driver;
