@@ -6,9 +6,7 @@
 #include <signal.h>
 
 #include "core/helpers.h"
-#include "core/parser.hpp"
 #include "models/net.h"
-#include "models/response.h"
 
 enum class OP { REGISTER, UPDATE, BROADCAST, DEREGISTER };
 
@@ -52,10 +50,9 @@ static constexpr size_t kAcceptPipeline = 256;
 static volatile sig_atomic_t g_stop = 0;
 static void on_sigint(int) { g_stop = 1; }
 
-UringDriver::UringDriver(Router *r, int fd) : fd_(fd) {
+UringDriver::UringDriver(int fd) : fd_(fd) {
   signal(SIGINT, on_sigint);
 
-  router_ = *r;
   if (fd_ < 0)
     throw ::std::runtime_error("failed to create listen socket");
 

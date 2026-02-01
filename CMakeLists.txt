@@ -15,9 +15,7 @@ pkg_check_modules(LIBURING REQUIRED IMPORTED_TARGET liburing)
 
 add_executable(app
   src/main.cpp
-  src/core/trace.cpp
   src/net/server.cpp
-  src/core/router.cpp
   src/handlers.cpp
   src/net/uring_driver.cpp
 )
@@ -29,10 +27,6 @@ add_compile_options(
 )
 
 target_link_libraries(app PRIVATE PkgConfig::LIBURING)
-
-if (ENABLE_TRACE)
-  target_compile_definitions(app PRIVATE ENABLE_TRACE=1)
-endif()
 
 if (ENABLE_ASAN)
   target_compile_options(app PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)

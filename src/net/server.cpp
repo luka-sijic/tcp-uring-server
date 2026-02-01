@@ -9,13 +9,11 @@
 #include <cstdint>
 #include <iostream>
 
-#include "core/trace.h"
 #include "net/server.hpp"
 #include "net/uring_driver.hpp"
 
 int Server::make_listen_socket(uint16_t port) {
   int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
-  TRACE("starting udp server");
   if (fd < 0) {
     perror("socket");
     return -1;
@@ -48,9 +46,9 @@ int Server::make_listen_socket(uint16_t port) {
   return fd;
 }
 
-Server::Server(Router *r, uint16_t port) : router_(r), port_(port) {
+Server::Server(uint16_t port) : port_(port) {
   int fd = make_listen_socket(port);
-  UringDriver driver(r, fd);
+  UringDriver driver(fd);
   // driver.run();
   std::cout << "Listening on 0.0.0.0:" << port << " (Ctrl+C to stop)\n";
 }

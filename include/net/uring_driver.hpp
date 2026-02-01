@@ -3,7 +3,6 @@
 #include <liburing.h>
 #include <unordered_map>
 
-#include "core/router.hpp"
 #include "net/connection.h"
 
 struct PeerInfo {
@@ -13,7 +12,7 @@ struct PeerInfo {
 
 class UringDriver {
 public:
-  UringDriver(Router *r, int fd);
+  UringDriver(int fd);
   ~UringDriver();
 
   bool submit_recv(uint32_t slot);
@@ -32,7 +31,6 @@ public:
 private:
   io_uring ring_{};
   int fd_{-1};
-  Router router_;
   std::unordered_map<uint32_t, PeerInfo> players_;
   static constexpr int kUdpSlots = 2;
   UdpState udp_[kUdpSlots];
