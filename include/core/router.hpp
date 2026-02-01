@@ -18,20 +18,22 @@ public:
     case 0:
       on_register(pkt, decoded);
       break;
-    case 3:
+    case 1:
       on_disconnect(pkt, decoded);
       break;
-    default:
+    case 2:
       on_update(pkt, decoded);
+      break;
+    default:
+      std::cerr << "Unknown OP recv" << '\n';
       break;
     }
   }
 
 private:
-  void on_register(const PacketView &pkt, Players &p) {
+  void on_register(const PacketView &pkt, const Players &p) {
     players_[p.id] = {pkt.peer, pkt.peer_len};
     std::cerr << "Player added: " << p.id << " " << p.op << '\n';
-    p.op = 2;
     broadcast_all(&p, sizeof(Players));
   }
 

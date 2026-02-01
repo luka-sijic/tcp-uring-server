@@ -18,8 +18,6 @@ public:
 
   void recv(uint32_t slot, int res);
   void send(uint32_t slot, int res);
-  void broadcast_add_player(uint32_t id);
-  void send_existing_players_to(uint32_t new_id);
 
   SendState *acquire_send_slot(uint32_t &idx_out);
   void on_send_complete(uint32_t send_idx, int res);

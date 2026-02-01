@@ -178,35 +178,6 @@ void UringDriver::on_send_complete(uint32_t send_idx, int res) {
   send_[send_idx].busy = false;
 }
 
-/*void UringDriver::send_existing_players_to(uint32_t new_id) {
-  auto it = players_.find(new_id);
-  if (it == players_.end())
-    return;
-  const auto &dst = it->second;
-
-  Players msg{};
-  msg.op = 2;
-
-  for (auto const &[id, peer] : players_) {
-    if (id == new_id)
-      continue;
-    msg.id = id;
-    ::sendto(fd_, &msg, sizeof(msg), 0,
-             reinterpret_cast<const sockaddr *>(&dst.addr), dst.len);
-  }
-}
-
-void UringDriver::broadcast_add_player(uint32_t id) {
-  Players msg{};
-  msg.op = 2;
-  msg.id = id;
-
-  for (auto const &[_, peer] : players_) {
-    ::sendto(fd_, &msg, sizeof(msg), 0,
-             reinterpret_cast<const sockaddr *>(&peer.addr), peer.len);
-  }
-}*/
-
 void UringDriver::recv(uint32_t slot, int res) {
   auto &s = udp_[slot];
   if (res < 0) {
