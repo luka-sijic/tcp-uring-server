@@ -80,7 +80,7 @@ UringDriver::UringDriver(int fd) : fd_(fd), router_(*this) {
   io_uring_submit(&ring_);
 }
 
-bool UringDriver::submit_recv(uint32_t slot) {
+bool UringDriver::submit_recv(uint32_t slot) noexcept {
   auto &s = udp_[slot];
 
   if (io_uring_sqe *sqe = io_uring_get_sqe(&ring_)) {
@@ -96,7 +96,7 @@ bool UringDriver::submit_recv(uint32_t slot) {
   return false;
 }
 
-bool UringDriver::submit_send(uint32_t slot) {
+bool UringDriver::submit_send(uint32_t slot) noexcept {
   auto &s = udp_[slot];
   // std::cout << "SENDING" << std::endl;
 
@@ -118,7 +118,7 @@ bool UringDriver::submit_send(uint32_t slot) {
   return false;
 }
 
-bool UringDriver::submit_close(int fd) {
+bool UringDriver::submit_close(int fd) noexcept {
   if (io_uring_sqe *sqe = io_uring_get_sqe(&ring_)) {
     io_uring_prep_close(sqe, fd);
     sqe->user_data = pack_ud_slot(Op::CLOSE, fd);
@@ -128,7 +128,7 @@ bool UringDriver::submit_close(int fd) {
 }
 
 void UringDriver::send_to(const sockaddr_storage &dst, socklen_t dst_len,
-                          const void *data, size_t len) {
+                          const void *data, size_t len) noexcept {
   if (len > SendState::kMax)
     return;
 
@@ -160,7 +160,7 @@ void UringDriver::send_to(const sockaddr_storage &dst, socklen_t dst_len,
   sqe->user_data = pack_ud_slot(Op::SEND, sidx);
 }
 
-SendState *UringDriver::acquire_send_slot(uint32_t &idx_out) {
+SendState *UringDriver::acquire_send_slot(uint32_t &idx_out) noexcept {
   for (uint32_t n = 0; n < kSendSlots; n++) {
     uint32_t i = (send_rr_ + n) % kSendSlots;
     if (!send_[i].busy) {
@@ -173,12 +173,12 @@ SendState *UringDriver::acquire_send_slot(uint32_t &idx_out) {
   return nullptr;
 }
 
-void UringDriver::on_send_complete(uint32_t send_idx, int res) {
+void UringDriver::on_send_complete(uint32_t send_idx, int res) noexcept {
   (void)res;
   send_[send_idx].busy = false;
 }
 
-void UringDriver::recv(uint32_t slot, int res) {
+void UringDriver::recv(uint32_t slot, int res) noexcept {
   auto &s = udp_[slot];
   if (res < 0) {
     std::cerr << "RECV(slot=" << slot << ") err=" << strerror(-res) << " ( "
@@ -200,7 +200,7 @@ void UringDriver::recv(uint32_t slot, int res) {
   io_uring_submit(&ring_);
 }
 
-void UringDriver::send(uint32_t slot, int res) {
+void UringDriver::send(uint32_t slot, int res) noexcept {
   auto &s = udp_[slot];
 
   if (res < 0) {
@@ -210,7 +210,7 @@ void UringDriver::send(uint32_t slot, int res) {
   io_uring_submit(&ring_);
 }
 
-void UringDriver::start() {
+void UringDriver::start() noexcept {
   std::cerr << "Server is running on port 9000" << '\n';
   std::cerr.flush();
   while (!g_stop) {

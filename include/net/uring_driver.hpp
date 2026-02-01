@@ -8,21 +8,21 @@
 class UringDriver : public INetOut {
 public:
   UringDriver(int fd);
-  ~UringDriver();
+  ~UringDriver() noexcept override;
 
-  bool submit_recv(uint32_t slot);
-  bool submit_send(uint32_t slot);
-  bool submit_close(int fd);
+  bool submit_recv(uint32_t slot) noexcept;
+  bool submit_send(uint32_t slot) noexcept;
+  bool submit_close(int fd) noexcept;
   void send_to(const sockaddr_storage &dst, socklen_t dst_len, const void *data,
-               size_t len) override;
+               size_t len) noexcept override;
 
-  void recv(uint32_t slot, int res);
-  void send(uint32_t slot, int res);
+  void recv(uint32_t slot, int res) noexcept;
+  void send(uint32_t slot, int res) noexcept;
 
-  SendState *acquire_send_slot(uint32_t &idx_out);
-  void on_send_complete(uint32_t send_idx, int res);
+  [[nodiscard]] SendState *acquire_send_slot(uint32_t &idx_out) noexcept;
+  void on_send_complete(uint32_t send_idx, int res) noexcept;
 
-  void start();
+  void start() noexcept;
 
 private:
   io_uring ring_{};

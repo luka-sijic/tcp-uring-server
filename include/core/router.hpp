@@ -6,6 +6,8 @@
 #include "net/net_out.hpp"
 #include <unordered_map>
 
+// enum class Op : uint8_t { Register = 0, Disconnect = 1, Update = 2 };
+
 class Router {
 public:
   Router(INetOut &out) : out_(out) {}
