@@ -50,7 +50,7 @@ static constexpr size_t kAcceptPipeline = 256;
 static volatile sig_atomic_t g_stop = 0;
 static void on_sigint(int) { g_stop = 1; }
 
-UringDriver::UringDriver(int fd) : fd_(fd) {
+UringDriver::UringDriver(int fd) : fd_(fd), router_(*this) {
   signal(SIGINT, on_sigint);
 
   if (fd_ < 0)
@@ -127,34 +127,58 @@ bool UringDriver::submit_close(int fd) {
   return false;
 }
 
-void UringDriver::submit_send_to(uint32_t slot, const sockaddr_storage &dst,
-                                 socklen_t dst_len, const void *data,
-                                 size_t len) {
-  auto &s = udp_[slot];
+void UringDriver::send_to(const sockaddr_storage &dst, socklen_t dst_len,
+                          const void *data, size_t len) {
+  if (len > SendState::kMax)
+    return;
 
-  // Copy payload into an owned buffer (must outlive the send)
-  s.out.assign((const char *)data, (const char *)data + len);
+  uint32_t sidx = 0;
+  SendState *ss = acquire_send_slot(sidx);
+  if (!ss)
+    return;
 
-  s.siov.iov_base = s.out.data();
-  s.siov.iov_len = s.out.size();
+  ss->len = len;
+  std::memcpy(ss->buf.data(), data, len);
 
-  // Fill msghdr destination
-  std::memset(&s.smsg, 0, sizeof(s.smsg));
-  s.smsg.msg_name = (void *)&dst; // destination address
-  s.smsg.msg_namelen = dst_len;
-  s.smsg.msg_iov = &s.siov;
-  s.smsg.msg_iovlen = 1;
+  ss->iov.iov_base = ss->buf.data();
+  ss->iov.iov_len = ss->len;
+
+  ss->dst = dst;
+  ss->dst_len = dst_len;
+
+  std::memset(&ss->msg, 0, sizeof(ss->msg));
+  ss->msg.msg_name = &ss->dst;
+  ss->msg.msg_namelen = ss->dst_len;
+  ss->msg.msg_iov = &ss->iov;
+  ss->msg.msg_iovlen = 1;
 
   // Queue sendmsg
-  // std::cerr << "WORKING" << '\n';
   io_uring_sqe *sqe = io_uring_get_sqe(&ring_);
-  io_uring_prep_sendmsg(sqe, fd_, &s.smsg, 0);
+  io_uring_prep_sendmsg(sqe, fd_, &ss->msg, 0);
 
   // Tag completion so your CQE handler knows it's a SEND for this slot
-  sqe->user_data = pack_ud_slot(Op::SEND, slot);
+  sqe->user_data = pack_ud_slot(Op::SEND, sidx);
 }
 
-void UringDriver::send_existing_players_to(uint32_t new_id) {
+SendState *UringDriver::acquire_send_slot(uint32_t &idx_out) {
+  for (uint32_t n = 0; n < kSendSlots; n++) {
+    uint32_t i = (send_rr_ + n) % kSendSlots;
+    if (!send_[i].busy) {
+      send_[i].busy = true;
+      send_rr_ = (i + 1) % kSendSlots;
+      idx_out = i;
+      return &send_[i];
+    }
+  }
+  return nullptr;
+}
+
+void UringDriver::on_send_complete(uint32_t send_idx, int res) {
+  (void)res;
+  send_[send_idx].busy = false;
+}
+
+/*void UringDriver::send_existing_players_to(uint32_t new_id) {
   auto it = players_.find(new_id);
   if (it == players_.end())
     return;
@@ -181,7 +205,7 @@ void UringDriver::broadcast_add_player(uint32_t id) {
     ::sendto(fd_, &msg, sizeof(msg), 0,
              reinterpret_cast<const sockaddr *>(&peer.addr), peer.len);
   }
-}
+}*/
 
 void UringDriver::recv(uint32_t slot, int res) {
   auto &s = udp_[slot];
@@ -193,36 +217,14 @@ void UringDriver::recv(uint32_t slot, int res) {
     return;
   }
 
-  std::cerr << "RECV slot=" << slot << " bytes=" << res << " data='";
-  if (res == (int)sizeof(Players)) {
-    Players p{};
-    std::memcpy(&p, s.buf, sizeof(Players));
-    if (p.op == 0) {
-      players_[p.id] = PeerInfo{s.peer, s.peer_len};
-      std::cerr << "Player added: " << p.id << '\n';
+  // slot?
+  // res = size
+  // s.buf = actual data
+  std::span<const std::byte> bytes =
+      std::as_bytes(std::span{s.buf, static_cast<size_t>(res)});
+  PacketView pkt{s.peer, s.peer_len, bytes};
+  router_.on_packet(pkt);
 
-      broadcast_add_player(p.id);
-      send_existing_players_to(p.id);
-    } else if (p.op == 3) {
-      players_.erase(p.id);
-    }
-    std::cerr << p.op << " " << p.id << " " << p.x << " " << p.y << " "
-              << p.color << " " << p.size << '\n';
-  } else {
-    std::cerr << "Unexpected size" << '\n';
-  }
-
-  for (auto &[id, peerinfo] : players_) {
-    const auto &dst = peerinfo.addr;
-    socklen_t dst_len = peerinfo.len;
-
-    if (same_endpoint(dst, dst_len, s.peer, s.peer_len))
-      continue;
-
-    submit_send_to(slot, dst, dst_len, s.buf, res);
-  }
-
-  // s.out.assign(s.buf, s.buf + res);
   submit_recv(slot);
   io_uring_submit(&ring_);
 }
@@ -233,8 +235,6 @@ void UringDriver::send(uint32_t slot, int res) {
   if (res < 0) {
     std::cerr << "SEND error: " << strerror(-res) << " (" << res << ")\n";
   }
-
-  // s.out.clear();
 
   io_uring_submit(&ring_);
 }

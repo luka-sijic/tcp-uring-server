@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cstddef>
 #include <netinet/in.h>
 #include <string>
@@ -21,23 +22,17 @@ struct UdpState {
   std::string out;
 };
 
-struct Conn {
-  int fd = -1;
+struct SendState {
+  static constexpr size_t kMax = 2048;
 
-  // Input accumulation for newline-delimited protocol
-  std::string in;
+  bool busy = false;
 
-  // Output buffer for partial sends
-  std::string out;
-  std::size_t out_sent = 0;
+  sockaddr_storage dst{};
+  socklen_t dst_len = 0;
 
-  // Temporary recv buffer used by io_uring recv
-  static constexpr std::size_t kBufSize = 4096;
-  char buf[kBufSize];
+  iovec iov{};
+  msghdr msg{};
 
-  bool has_pending_send() const { return !out.empty(); }
-  void reset_send_state() {
-    out.clear();
-    out_sent = 0;
-  }
+  alignas(16) std::array<std::byte, kMax> buf{};
+  size_t len = 0;
 };
