@@ -27,7 +27,7 @@ public:
   void broadcast_add_player(uint32_t id);
   void send_existing_players_to(uint32_t new_id);
 
-  void run();
+  void start();
 
 private:
   io_uring ring_{};

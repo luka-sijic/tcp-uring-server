@@ -242,8 +242,8 @@ void UringDriver::send(uint32_t slot, int res) {
   io_uring_submit(&ring_);
 }
 
-void UringDriver::run() {
-  std::cerr << "RUNNING" << '\n';
+void UringDriver::start() {
+  std::cerr << "Server is running on port 9000" << '\n';
   std::cerr.flush();
   while (!g_stop) {
     io_uring_cqe *cqe{};

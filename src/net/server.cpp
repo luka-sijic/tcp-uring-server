@@ -61,7 +61,7 @@ int Server::make_listen_socket(uint16_t port) {
 Server::Server(Router *r, uint16_t port) : router_(r), port_(port) {
   int fd = make_listen_socket(port);
   UringDriver driver(r, fd);
-  driver.run();
+  // driver.run();
   std::cout << "Listening on 0.0.0.0:" << port << " (Ctrl+C to stop)\n";
 }
 
